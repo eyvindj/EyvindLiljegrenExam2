@@ -45,11 +45,11 @@ library(splus2R)
 library(tibble)
 
 # Define the correct path to you parent directory
-#read_in <- "./data"
-read_in <- "~/Rprogrammingversioncontrol/exam2/EyvindLiljegrenExam2/Data/BRACE_biodex_isokinetic_dynamometer_RAW_A_BID-4_20230415"
-read_in2 <- "~/Rprogrammingversioncontrol/exam2/EyvindLiljegrenExam2/Data/BRACE_biodex_isokinetic_dynamometer_RAW_A_R2_20231130"
+ read_in <- "~/Rprogrammingversioncontrol/exam2/EyvindLiljegrenExam2"
+
+
 # List all the files from the folder structure.
-all_files <- c(list.files(path = read_in, recursive = TRUE, pattern = ".*", full.names = TRUE),list.files(path = read_in2, recursive = TRUE, pattern = ".*", full.names = TRUE))
+all_files <- list.files(path = read_in, recursive = TRUE, pattern = ".txt", full.names = FALSE)
 all_files
 
 # Define the names for each file: 
@@ -77,15 +77,26 @@ print(all_files_name)
 # Define a vector with corresponding column names: Torque, Speed and Angle.
 column_names <- c('Torque', 'Speed', 'Angle')
 
-# Read in all the files
 df_lst <- all_files %>% 
-  map(read_table, skip = 26, col_names=FALSE) %>% 
-  map(. %>% set_names(column_names))%>% 
-
+  map(~ read.table(.x, header = FALSE, skip = 26, sep = "\t", stringsAsFactors = FALSE)) %>% 
+  map(~ set_names(.x, column_names)) %>% 
+  map(~ .x %>% mutate(Angle = as.numeric(gsub(",", ".", Angle)))) %>% 
   set_names(all_files_name)
 
 # Print head of all dfs in the list
 map(df_lst, head)
+
+
+#old version that failed at step 5a (due to length 11 in first df)
+# Read in all the files
+#df_lst <- all_files %>% 
+#  map(read_table, skip = 26, col_names=FALSE) %>% 
+#  map(. %>% set_names(column_names))%>% 
+
+#  set_names(all_files_name)
+
+# Print head of all dfs in the list
+#map(df_lst, head)
 ```
 *You can double check your output in "exam_help_file.pdf".*
 
@@ -103,13 +114,11 @@ map(df_lst, head)
 # Check if all columns of each dataframe are numeric
 lapply(df_lst, function(x) all(apply(x, 2, function(col) is.numeric(col))))
 
-#lapply(df_lst_long, function(x) all(apply(x, 2, function(col) is.numeric(col))))
-
 
 # Clean your data and convert df_lst to long format - All columns come out as numeric, no need to clean data i believe
 df_lst_long <- df_lst %>% 
- # map(. %>% mutate(across("Angle",~gsub(",", ".", .)))) %>% # change the wrong separator to '.'
-  #map(. %>% mutate(across(where(is.character),as.numeric))) %>% # convert from class character to class numeric
+  map(. %>% mutate(across("Angle",~gsub(",", ".", .)))) %>% # change the wrong separator to '.'
+  map(. %>% mutate(across(where(is.character),as.numeric))) %>% # convert from class character to class numeric
   map(. %>% tibble::add_column(time= seq_along(.[[1]])) ) %>% # use you index to create a new column time
   map(. %>% pivot_longer(cols = -'time', names_to = "name", values_to = "value")) # convert to long format 
 
@@ -136,17 +145,16 @@ map(df_lst_long, head)
 df_lst_angle <- df_lst_long %>% map(. %>% filter(name=="Angle"))
 
 # Print head of all dfs in the list
-map(df_lst_angle, head)
+#map(df_lst_angle, head)
 
 # Define the peaks and segment of the Angle variable
 df_lst_angle <- df_lst_angle %>% 
   map(. %>% mutate(keep = peaks(value, strict = FALSE))) %>% # define the peaks using peaks() function form splus2R package
-  map(. %>% filter(keep==TRUE))%>% # keep only the values defined to be a peak
-  map(. %>% dplyr::mutate(group = cumsum(abs(lag(value, default = first(value)) - value) > 10))) # define distinct group whenever you observe difference between values > 10.
+  map(. %>% filter(keep == TRUE)) %>% # keep only the values defined to be a peak
+  map(. %>% mutate(group = cumsum(abs(lag(value, default = first(value)) - value) > 10))) # define distinct group whenever you observe difference between values > 10.
 
 # Print head of all dfs in the list
 map(df_lst_angle, head)
-#View(df_lst_angle$A_BID-4_CTM01.txt)
 ```
 *You can double check your final output of this chunk in "exam_help_file.pdf".*
 
@@ -160,12 +168,11 @@ map(df_lst_angle, head)
 
 ```{r}
 # Extract the min. value of each group
-coord_min_list <- df_lst_angle %>% 
-  map(. %>% group_by(group)) %>% # group your dfs based correct column
- #map(.%>%  slice_min(order_by = value, n = 1)) %>% 
- #map(. %>% slice_min(value, n = 1)) %>%
- map(. %>% dplyr::filter(value== min(value))) %>% # extract only min values of each group
-    map(. %>% ungroup()) # ungroup dfs
+
+coord_min_list <- df_lst_angle %>%
+map(. %>% group_by(group)) %>% # group your dfs based correct column
+map(. %>% slice(which.min(value))) %>% # extract only min values of each group
+map(. %>% ungroup()) # ungroup dfs
 
 # Print head of all dfs in the list
 map(coord_min_list, head)
@@ -173,11 +180,11 @@ map(coord_min_list, head)
 # Define Angle segments 
 # You will use this later on to define 5 values (global min.) of the SPEED variable on the negative side of y-axis
 coord_min_list <- coord_min_list %>% 
-  map(. %>% mutate(new_group = rep(c('start', 'end'), length.out = nrow(.))))  %>% # define new column with corresponding labels: c('start', 'end')
+  map(. %>% mutate(new_group = rep(c('start', 'end'), times=5)))  %>% # define new column with corresponding labels: c('start', 'end')
   map(. %>% select(time, new_group)) %>%  # at this point you only need 2 columns: time and new_group
- #   map(. %>% mutate(segment = rep(1:5,each = 2))) %>%
-#   map(. %>% mutate(segment = rep(1:5, length.out = nrow(.), each = 2))) %>%
-map(. %>% mutate(segment = rep(1:(nrow(.) %/% 2), each = 2, length.out = nrow(.)))) %>% #lines 164 and 165 are needed for line 167 to work. try to understand why!!!
+  map(. %>% mutate(segment = rep(1:5,each = 2))) %>%
+ #  map(. %>% mutate(segment = rep(1:5, length.out = nrow(.), each = 2))) %>%
+#  map(. %>%  mutate(segment = rep(1:5, each=2))) %>%  #lines 164 and 165 are needed for line 167 to work. try to understand why!!!
   map(. %>% group_by(segment)) %>% 
   map(. %>% pivot_wider(names_from = new_group, values_from = time)) # convert to wide format
 
@@ -197,23 +204,24 @@ map(coord_min_list, head)
 
 ```{r}
 coord_max_list <- df_lst_angle %>% 
-  ___(. %>% group_by(group)) %>% # group your dfs based correct column
-  map(. %>% _____(_____(value))) %>% # extract only min values of each group
-  ___(. %>% ungroup()) %>% # ungroup dfs
-  map(. %>% _____(_______________)) # remove group = 0 and group = 9
-
-# Print head of all dfs in the list
-map(__________, head)
-
-coord_max_list <- coord_max_list %>% 
-  map(. %>% _______(new_group = rep(c('start', 'end'), times = ____))) %>% # define new column with corresponding labels: c('start', 'end')
-  map(. %>% _______(-group, -name, -keep, -value)) %>% # at this point you only need 2 columns: time and new_group
-  map(. %>% _______(segment = rep(1:4,each = 2))) %>% 
-  map(. %>% _______(segment)) %>% 
-  map(. %>% _______(____________________________)) # convert to wide format
+  map(. %>% group_by(group)) %>% # group your dfs based correct column
+  map(. %>% slice(which.min(value))) %>% # extract only min values of each group
+  map(. %>% ungroup()) %>% # ungroup dfs
+  map(. %>% filter(!group %in% c(0,9))) # remove group = 0 and group = 9
 
 # Print head of all dfs in the list
 map(coord_max_list, head)
+
+coord_max_list <- coord_max_list %>% 
+  map(. %>% mutate(new_group = rep(c('start', 'end'), times = 4))) %>% # define new column with corresponding labels: c('start', 'end')
+  map(. %>% select(-group, -name, -keep, -value)) %>% # at this point you only need 2 columns: time and new_group
+  map(. %>% mutate(segment = rep(1:4,each = 2))) %>% 
+  map(. %>% group_by(segment)) %>% 
+  map(. %>% pivot_wider(names_from = new_group, values_from = time)) # convert to wide format
+
+# Print head of all dfs in the list
+map(coord_max_list, head)
+map(coord_max_list, ~head(.x, n = 10))
 ```
 *At this point you should have staring and ending point of 4 segments of the ANGLE variable (looking upwards). You will use this info to define global max. (peaks) of the Torque variable for the positive side of the y-axis. You can double check your final output of this chunk in "exam_help_file.pdf".*
 
@@ -227,7 +235,7 @@ map(coord_max_list, head)
 
 ```{r}
 df_lst_torque <- df_lst %>% map(. %>% tibble::rowid_to_column(var = 'time'))
-
+map(df_lst_torque, head)
 min_list <- map2(df_lst_torque, coord_min_list, ~ {
   dt <- .x
   co <- .y
@@ -257,7 +265,7 @@ map(max_list, head)
 ```
 *You can double check your final output of this chunk in "exam_help_file.pdf".*
 *YOUR EXPLANATION HERE: *
-
+using the time coordinates for minimum and maxium angular movement we can find the torque segments. Using filter with these time coordinates we can then use which.max and which.min to identify the maximum and minimum torque. The rows with the max/min are kept and  listed in a df with one row for each segments max and min torqe.
 
 
 
@@ -266,11 +274,11 @@ map(max_list, head)
 
 ```{r}
 # Remove everything except time and Torque
-min_list <- min_list %>% ___(. %>% _______(______________) %>% dplyr::mutate(local = 'min'))
-max_list <- max_list %>% ___(. %>% _______(______________) %>% dplyr::mutate(local = 'max'))
+min_list <- min_list %>% map(. %>% select(time, Torque) %>% dplyr::mutate(local = 'min'))
+max_list <- max_list %>% map(. %>% select(time, Torque) %>% dplyr::mutate(local = 'max'))
 
 # Combine two lists
-min_max_list <- ___(min_list, max_list, ~ ___(.x, .y))
+min_max_list <- map2(min_list, max_list, ~ rbind(.x, .y))
 
 # Print head of all dfs in the list
 map(min_max_list, head)
@@ -285,11 +293,13 @@ map(min_max_list, head)
 
 ```{r}
 # Extract the speed info
-speed <- _________ %>% 
-  map(______, nrows = 1, header = T, col.names = 'info') %>% # read in the files
-  map(. %>% tibble::_________(var = 'id')) %>% # assign row names to column  
-  map(. %>% ______('note', id:info, sep = ': ', remove = T)) %>% # unite to columns into one 
-  set_names(_________) # define the names for each df in a list
+speed <- all_files %>% 
+  map(read.table, nrows = 1, header = T, col.names = 'info') %>% # read in the files
+  map(. %>% tibble::rowid_to_column(var = 'id')) %>% # assign row names to column  
+  #map(. %>% unite('note', id:info, sep = 'speed: ', remove = T)) %>% 
+  #map(. %>% select(info) %>% unite('note', info, sep = ': ', remove = TRUE)) # Only keep info# unite to columns into one 
+  map(. %>% mutate(id = "speed") %>% unite('note', id:info, sep = ': ', remove = TRUE))
+  set_names(all_files_name) # define the names for each df in a list
 
 # Print head of all dfs in the list
 map(speed, head)
@@ -312,26 +322,26 @@ print(info)
 
 ```{r}
 # Create a list of plots for all 16 files.
-plots_all <- __________(1:length(__________), function(i) {
+plots_all <- lapply(1:length(df_lst_long), function(i) {
   
-  ggplot(data = __________[[i]], aes(x = time, y = value)) + # define main ggplot 
-    ______(aes(col = name)) + # define lines
-    geom_point(data = __________[[i]], aes(x = time, y = Torque)) + # define global min and max point of TORQUE variable
-    ______(data = __________[[i]], aes(x = ______, y = Torque, ______ = round(Torque, 2)), # define values of global min and max TORQUE variable
+  ggplot(data = df_lst_long[[i]], aes(x = time, y = value)) + # define main ggplot 
+    geom_line(aes(col = name)) + # define lines
+    geom_point(data = min_max_list[[i]], aes(x = time, y = Torque)) + # define global min and max point of TORQUE variable
+    geom_text(data = min_max_list[[i]], aes(x = time, y = Torque, label = round(Torque, 2)), # define values of global min and max TORQUE variable
               size = 3,
-              vjust = ifelse(__________[[i]]$Torque >= 0, -1, 2)) +
+              vjust = ifelse(min_max_list[[i]]$Torque >= 0, -1, 2)) +
     theme_bw() + 
-    ______(panel.grid.minor = __________(),# remove grid.minor on both axis
-          __________ = element_blank(), # remove grid.major only on the x-axis
+    theme(panel.grid.minor = element_blank(),# remove grid.minor on both axis
+          panel.grid.major = element_blank(), # remove grid.major only on the x-axis
           legend.position = 'bottom') + 
     labs(col = '', y = 'Value', x = 'Time(min)', # define the legend title, x, y, title and subtitle
-         title = paste('File:', names(speed)[___]),
-         subtitle = ______(info[___, 'condition'], '\n',str_to_title(speed[[___]]$note)))
+         title = paste('File:', names(speed)[i]),
+         subtitle = paste(info[i, 'condition'], '\n',str_to_title(speed[[i]]$note)))
   
 })
 
 # print third figure
-plots_all[[___]]
+plots_all[[3]]
 ```
 *You can double check your final output of this chunk in "exam_help_file.pdf".* 
 
@@ -343,8 +353,8 @@ plots_all[[___]]
 ```{r}
 # Save the plots in the single .pdf file
 pdf(file = paste0(read_in, '/results_figs.pdf'))
-______(plots_all, function(___) plot(___))
-______()
+lapply(plots_all, function(p) plot(p))
+dev.off()
 ```
 *THE END :)*
 
